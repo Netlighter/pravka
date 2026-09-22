@@ -2,6 +2,8 @@
 
 Редактор конфигов [zapret](https://github.com/bol-van/zapret) — `winws` / `nfqws`, `.bat` и голые аргументы. Правка стратегий между `--new`, а не универсальный shell-редактор.
 
+Живая версия на Vercel: [https://pravka-eta.vercel.app/](https://pravka-eta.vercel.app/)
+
 ## Возможности
 
 - Своя подсветка флагов: WinDivert, фильтры, hostlist/ipset, desync, fake, `--new`, `%BIN%`, порты, пути и лишний хвост.
@@ -12,6 +14,10 @@
 - Темы редактора (Zapret, Dracula, One Dark, Nord, Monokai, Tokyo Night, Catppuccin, Gruvbox, светлые), перенос строк, масштаб интерфейса.
 
 ## Запуск
+
+Онлайн: [pravka-eta.vercel.app](https://pravka-eta.vercel.app/)
+
+Локально:
 
 ```bash
 npm install
