@@ -1,5 +1,5 @@
 import { autocompletion, type Completion, type CompletionContext } from "@codemirror/autocomplete";
-import { FLAGS, CATEGORY_META } from "../data/catalog";
+import { CATEGORY_META, FLAGS, type FlagDef } from "../data/catalog";
 import {
   DESYNC_MODES,
   FOOLING,
@@ -9,17 +9,45 @@ import {
   FAKE_TLS_MODS,
 } from "../data/enums";
 
+function flagInfo(flag: FlagDef) {
+  return () => {
+    const root = document.createElement("div");
+    root.className = "cm-zapret-info";
+    const syntax = document.createElement("div");
+    syntax.className = "hover-kicker";
+    syntax.textContent = flag.syntax;
+    const summary = document.createElement("p");
+    summary.className = "hover-body";
+    summary.textContent = flag.summary;
+    root.append(syntax, summary);
+    if (flag.values?.length) {
+      const label = document.createElement("div");
+      label.className = "hover-values-label";
+      label.textContent = "Варианты";
+      const chips = document.createElement("div");
+      chips.className = "value-chips";
+      for (const value of flag.values) {
+        const chip = document.createElement("code");
+        chip.textContent = value;
+        chips.append(chip);
+      }
+      root.append(label, chips);
+    }
+    if (flag.hint) {
+      const hint = document.createElement("p");
+      hint.className = "hover-hint";
+      hint.textContent = flag.hint;
+      root.append(hint);
+    }
+    return root;
+  };
+}
+
 const flagCompletions: Completion[] = FLAGS.map((flag) => ({
   label: `--${flag.name}`,
   type: "keyword",
   detail: CATEGORY_META[flag.category].label,
-  info: [
-    flag.syntax,
-    flag.summary,
-    flag.values?.length ? `Варианты:\n${flag.values.map((value) => `• ${value}`).join("\n")}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n\n"),
+  info: flagInfo(flag),
   apply: flag.args === "none" ? `--${flag.name}` : `--${flag.name}=`,
 }));
 

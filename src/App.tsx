@@ -6,60 +6,111 @@ import {
   CircleAlert,
   CircleX,
   ClipboardPaste,
+  Code2,
   Copy,
   Download,
   FileUp,
   Info,
+  ListTree,
   Minus,
   Plus,
   Search,
   Wand2,
   TextWrap,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CATEGORY_META, FLAGS, type FlagCategory, type FlagDef } from "./data/catalog";
-import { SAMPLES } from "./data/sample";
+import { DEFAULT_SAMPLE, SAMPLES } from "./data/sample";
+import { chromeOf, applyChrome } from "./editor/chrome";
 import { editorExtensions } from "./editor/extensions";
 import { colorFor } from "./editor/gutter";
-import { applyChrome } from "./editor/chrome";
 import { THEMES, isThemeId, type ThemeId } from "./editor/themes";
 import { formatConfig } from "./parse/format";
 import { lineAt, parseConfig } from "./parse/parse";
 import { validateConfig, type Severity } from "./parse/validate";
+import { Menu } from "./ui/Menu";
+import { Splitter } from "./ui/Splitter";
 
 const STORAGE_KEY = "pravka:source";
+const PREV_KEY = "pravka:previous";
 const PREFS_KEY = "pravka:prefs";
 const SCALES = [0.8, 0.9, 1, 1.1, 1.25, 1.5] as const;
+const LEFT_DEFAULT = 248;
+const RIGHT_DEFAULT = 300;
+const PANEL_DEFAULT = 176;
+
+type MobilePane = "toc" | "editor" | "docs";
 
 type Prefs = {
   theme: ThemeId;
   wrap: boolean;
   scale: number;
   panelOpen: boolean;
+  leftWidth: number;
+  rightWidth: number;
+  panelHeight: number;
+  mobilePane: MobilePane;
 };
 
-function loadInitial() {
+const defaultPrefs = (): Prefs => ({
+  theme: "zapret",
+  wrap: true,
+  scale: 1,
+  panelOpen: true,
+  leftWidth: LEFT_DEFAULT,
+  rightWidth: RIGHT_DEFAULT,
+  panelHeight: PANEL_DEFAULT,
+  mobilePane: "editor",
+});
+
+function readStorage(key: string) {
   try {
-    return localStorage.getItem(STORAGE_KEY) || SAMPLES[1]?.source || SAMPLES[0]!.source;
+    return localStorage.getItem(key);
   } catch {
-    return SAMPLES[1]?.source || SAMPLES[0]!.source;
+    return null;
   }
 }
 
-function loadPrefs(): Prefs {
+function writeStorage(key: string, value: string) {
   try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return { theme: "zapret", wrap: true, scale: 1, panelOpen: true };
+    localStorage.setItem(key, value);
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function loadInitial() {
+  return readStorage(STORAGE_KEY) || DEFAULT_SAMPLE.source;
+}
+
+function loadPrevious() {
+  return readStorage(PREV_KEY);
+}
+
+function loadPrefs(): Prefs {
+  const fallback = defaultPrefs();
+  try {
+    const raw = readStorage(PREFS_KEY);
+    if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<Prefs>;
+    const pane = parsed.mobilePane;
     return {
-      theme: parsed.theme && isThemeId(parsed.theme) ? parsed.theme : "zapret",
+      theme: parsed.theme && isThemeId(parsed.theme) ? parsed.theme : fallback.theme,
       wrap: parsed.wrap !== false,
-      scale: SCALES.includes(parsed.scale as (typeof SCALES)[number]) ? parsed.scale! : 1,
+      scale: SCALES.includes(parsed.scale as (typeof SCALES)[number]) ? parsed.scale! : fallback.scale,
       panelOpen: parsed.panelOpen !== false,
+      leftWidth: clamp(parsed.leftWidth ?? fallback.leftWidth, 168, 420),
+      rightWidth: clamp(parsed.rightWidth ?? fallback.rightWidth, 220, 460),
+      panelHeight: clamp(parsed.panelHeight ?? fallback.panelHeight, 96, 420),
+      mobilePane: pane === "toc" || pane === "docs" || pane === "editor" ? pane : fallback.mobilePane,
     };
   } catch {
-    return { theme: "zapret", wrap: true, scale: 1, panelOpen: true };
+    return fallback;
   }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 const bootPrefs = loadPrefs();
@@ -84,8 +135,15 @@ export default function App() {
   const [theme, setTheme] = useState<ThemeId>(prefs.theme);
   const [wrap, setWrap] = useState(prefs.wrap);
   const [scale, setScale] = useState(prefs.scale);
+  const [leftWidth, setLeftWidth] = useState(prefs.leftWidth);
+  const [rightWidth, setRightWidth] = useState(prefs.rightWidth);
+  const [panelHeight, setPanelHeight] = useState(prefs.panelHeight);
+  const [mobilePane, setMobilePane] = useState<MobilePane>(prefs.mobilePane);
+  const [previous, setPrevious] = useState(loadPrevious);
   const editorRef = useRef<ReactCodeMirrorRef>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
 
   const parsed = useMemo(() => parseConfig(source), [source]);
   const issues = useMemo(() => validateConfig(parsed), [parsed]);
@@ -96,16 +154,36 @@ export default function App() {
   const kind = parsed.batch ? "config.bat" : parsed.flags.length ? "winws-args.txt" : "untitled";
   const extensions = useMemo(() => editorExtensions({ theme, wrap }), [theme, wrap]);
 
+  const persistSource = useCallback((text: string) => writeStorage(STORAGE_KEY, text), []);
+
+  const replaceSource = useCallback(
+    (next: string) => {
+      const current = sourceRef.current;
+      if (next === current) return;
+      writeStorage(PREV_KEY, current);
+      setPrevious(current);
+      setSource(next);
+      persistSource(next);
+    },
+    [persistSource],
+  );
+
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, source);
-      } catch {
-        /* ignore quota */
-      }
-    }, 250);
+    const timer = window.setTimeout(() => persistSource(source), 120);
     return () => window.clearTimeout(timer);
-  }, [source]);
+  }, [source, persistSource]);
+
+  useEffect(() => {
+    const flush = () => persistSource(sourceRef.current);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", flush);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", flush);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [persistSource]);
 
   useLayoutEffect(() => {
     document.documentElement.style.setProperty("--ui-scale", String(scale));
@@ -113,24 +191,27 @@ export default function App() {
   }, [theme, scale]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify({ theme, wrap, scale, panelOpen }));
-    } catch {
-      /* ignore quota */
-    }
-  }, [theme, wrap, scale, panelOpen]);
+    writeStorage(
+      PREFS_KEY,
+      JSON.stringify({ theme, wrap, scale, panelOpen, leftWidth, rightWidth, panelHeight, mobilePane }),
+    );
+  }, [theme, wrap, scale, panelOpen, leftWidth, rightWidth, panelHeight, mobilePane]);
 
   const jump = useCallback((from: number) => {
-    const view = editorRef.current?.view;
-    if (!view) return;
-    view.focus();
-    view.dispatch({
-      selection: { anchor: from },
-      scrollIntoView: true,
-    });
+    setMobilePane("editor");
+    const go = () => {
+      const view = editorRef.current?.view;
+      if (!view) return;
+      view.focus();
+      view.dispatch({
+        selection: { anchor: from },
+        scrollIntoView: true,
+      });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(go));
   }, []);
 
-  const onFormat = () => setSource(formatConfig(parsed));
+  const onFormat = () => replaceSource(formatConfig(parsed));
   const onCopy = async () => {
     await navigator.clipboard.writeText(source);
     setCopied(true);
@@ -148,7 +229,7 @@ export default function App() {
   const onOpen = (file: File) => {
     const reader = new FileReader();
     reader.onload = () => {
-      if (typeof reader.result === "string") setSource(reader.result.replaceAll("\r\n", "\n"));
+      if (typeof reader.result === "string") replaceSource(reader.result.replaceAll("\r\n", "\n"));
     };
     reader.readAsText(file);
   };
@@ -204,38 +285,38 @@ export default function App() {
         </div>
         <div className="title-actions">
           <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-            <FileUp /> Открыть
+            <FileUp /> <span className="btn-label">Открыть</span>
           </button>
           <button type="button" className="btn" onClick={onDownload}>
-            <Download /> Сохранить
+            <Download /> <span className="btn-label">Сохранить</span>
           </button>
           <button type="button" className="btn primary" onClick={onFormat}>
-            <Wand2 /> Форматировать
+            <Wand2 /> <span className="btn-label">Форматировать</span>
           </button>
           <button type="button" className="btn" onClick={onCopy}>
-            {copied ? <Check /> : <Copy />} {copied ? "Скопировано" : "Копировать"}
+            {copied ? <Check /> : <Copy />} <span className="btn-label">{copied ? "Скопировано" : "Копировать"}</span>
           </button>
-          <button type="button" className="btn" onClick={() => navigator.clipboard.readText().then(setSource)}>
-            <ClipboardPaste /> Вставить
+          <button type="button" className="btn" onClick={() => navigator.clipboard.readText().then(replaceSource)}>
+            <ClipboardPaste /> <span className="btn-label">Вставить</span>
           </button>
-          <select
-            className="ghost-select"
-            defaultValue=""
-            onChange={(event) => {
-              const sample = SAMPLES.find((item) => item.id === event.target.value);
-              if (sample) setSource(sample.source);
-              event.target.value = "";
+          <Menu
+            label="Примеры"
+            options={[
+              ...(previous
+                ? [{ id: "previous", label: "Последние правки", hint: "Вернуть текст до замены" }]
+                : []),
+              ...SAMPLES.map((sample) => ({ id: sample.id, label: sample.title, hint: sample.hint })),
+            ]}
+            onSelect={(id) => {
+              if (id === "previous") {
+                const draft = loadPrevious();
+                if (draft) replaceSource(draft);
+                return;
+              }
+              const sample = SAMPLES.find((item) => item.id === id);
+              if (sample) replaceSource(sample.source);
             }}
-          >
-            <option value="" disabled>
-              Примеры
-            </option>
-            {SAMPLES.map((sample) => (
-              <option key={sample.id} value={sample.id}>
-                {sample.title}
-              </option>
-            ))}
-          </select>
+          />
         </div>
         <div className="title-tools">
           <button
@@ -247,21 +328,24 @@ export default function App() {
           >
             <TextWrap />
           </button>
-          <select
-            className="ghost-select"
+          <Menu
             value={theme}
-            onChange={(event) => {
-              if (isThemeId(event.target.value)) setTheme(event.target.value);
-            }}
+            align="right"
             title="Тема редактора"
-            aria-label="Тема редактора"
-          >
-            {THEMES.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+            options={THEMES.map((item) => {
+              const chrome = chromeOf(item.id);
+              return {
+                id: item.id,
+                label: item.label,
+                hint: item.dark ? "тёмная" : "светлая",
+                swatch: chrome["--editor"],
+                accent: chrome["--accent"],
+              };
+            })}
+            onSelect={(id) => {
+              if (isThemeId(id)) setTheme(id);
+            }}
+          />
           <div className="zoom">
             <button
               type="button"
@@ -297,8 +381,20 @@ export default function App() {
         />
       </header>
 
-      <div className="workbench">
-        <aside className="card sidebar">
+      <nav className="mobile-nav" aria-label="Разделы">
+        <button type="button" className={mobilePane === "toc" ? "on" : ""} onClick={() => setMobilePane("toc")}>
+          <ListTree /> Блоки
+        </button>
+        <button type="button" className={mobilePane === "editor" ? "on" : ""} onClick={() => setMobilePane("editor")}>
+          <Code2 /> Текст
+        </button>
+        <button type="button" className={mobilePane === "docs" ? "on" : ""} onClick={() => setMobilePane("docs")}>
+          <BookOpen /> Справка
+        </button>
+      </nav>
+
+      <div className="workbench" data-pane={mobilePane}>
+        <aside className="card sidebar pane-toc" style={{ width: `calc(${leftWidth}px * var(--ui-scale))` }}>
           <div className="side-title">Оглавление</div>
           <div className="toc">
             {!parsed.flags.length && <div className="empty-hint">Нет флагов — вставьте конфиг или откройте файл.</div>}
@@ -348,6 +444,8 @@ export default function App() {
           </div>
         </aside>
 
+        <Splitter axis="x" onDelta={(delta) => setLeftWidth((width) => clamp(width + delta / scale, 168, 420))} />
+
         <section
           className="card editor-col"
           onDragOver={(event) => event.preventDefault()}
@@ -376,7 +474,9 @@ export default function App() {
           </div>
         </section>
 
-        <aside className="card sidebar docs">
+        <Splitter axis="x" onDelta={(delta) => setRightWidth((width) => clamp(width - delta / scale, 220, 460))} />
+
+        <aside className="card sidebar docs" style={{ width: `calc(${rightWidth}px * var(--ui-scale))` }}>
           <div className="side-title">
             <BookOpen /> Справочник
           </div>
@@ -396,7 +496,17 @@ export default function App() {
         </aside>
       </div>
 
-      <section className={`card panel ${panelOpen ? "open" : ""}`}>
+      <section
+        className={`card panel ${panelOpen ? "open" : ""}`}
+        style={{ "--panel-h": `${panelHeight}px` } as CSSProperties}
+      >
+        {panelOpen && (
+          <Splitter
+            axis="y"
+            className="panel-resizer"
+            onDelta={(delta) => setPanelHeight((height) => clamp(height - delta / scale, 96, 420))}
+          />
+        )}
         <div className="panel-bar">
           <div className="panel-title">
             Проблемы
@@ -415,7 +525,7 @@ export default function App() {
             aria-label={panelOpen ? "Свернуть панель" : "Развернуть панель"}
             title="Ctrl+Shift+M"
           >
-            <ChevronDown style={panelOpen ? undefined : { transform: "rotate(180deg)" }} />
+            <ChevronDown className={panelOpen ? undefined : "is-collapsed"} />
           </button>
         </div>
         {panelOpen && (

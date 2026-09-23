@@ -247,8 +247,12 @@ const CHROME: Record<ThemeId, Chrome> = {
 
 const CHROME_KEYS = Object.keys(CHROME.zapret);
 
+export function chromeOf(theme: ThemeId): Chrome {
+  return CHROME[theme] ?? CHROME.zapret;
+}
+
 export function applyChrome(theme: ThemeId, target: HTMLElement = document.documentElement) {
-  const chrome = CHROME[theme] ?? CHROME.zapret;
+  const chrome = chromeOf(theme);
   for (const key of CHROME_KEYS) {
     target.style.setProperty(key, chrome[key] ?? "");
   }
